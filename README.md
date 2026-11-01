@@ -1,103 +1,219 @@
-# Infrastructure Observability Stack — Kubernetes Monitoring
+# Kubernetes Observability Lab
 
-> Personal Project | Aug 2025 – Oct 2025
+A hands-on Kubernetes project focused on cluster monitoring, metrics collection, Grafana dashboards, and Horizontal Pod Autoscaling (HPA).
 
-## What This Does
+## Project Overview
 
-Full observability stack deployed on a 5-node kubeadm Kubernetes cluster:
-- **Prometheus + Grafana** — metrics collection and dashboards
-- **EFK Stack** (Elasticsearch, Fluentd, Kibana) — centralised log aggregation
-- **Alertmanager** — alerting on error-rate spikes
-- **HPA** — Horizontal Pod Autoscaler for automatic scaling
+This project uses a local **Minikube Kubernetes cluster** to practise Kubernetes observability and workload scaling.
+
+The validated implementation includes:
+
+- **Prometheus** – collects Kubernetes and cluster metrics.
+- **Grafana** – visualises node, namespace, and workload metrics.
+- **Metrics Server** – provides resource metrics for Kubernetes workloads.
+- **Horizontal Pod Autoscaler (HPA)** – scales a frontend deployment based on CPU utilisation.
+- **Helm** – deploys the Prometheus and Grafana monitoring stack.
 
 ## Architecture
 
+```text
+                 Kubernetes Cluster
+                      (Minikube)
+                          |
+          +---------------+---------------+
+          |                               |
+    Frontend Workload                Monitoring
+          |                               |
+    HPA (CPU-based)                  Prometheus
+          |                               |
+    Scale Replicas                    Grafana
+                                          |
+                                      Dashboards
 ```
-  Microservices (8 services)
-        │
-        ├──► Fluentd ──► Elasticsearch ──► Kibana  (logs)
-        │
-        └──► Prometheus ──► Grafana         (metrics)
-                  │
-                  └──► Alertmanager ──► Slack / Email  (alerts)
 
-  Under load:
-  HPA monitors CPU/memory ──► scales pods 2 → 8 automatically
-```
+## Technology Stack
 
-**Stack:** Kubernetes (kubeadm, 5 nodes) · Helm · Prometheus · Grafana · Elasticsearch · Fluentd · Kibana · Alertmanager · HPA · Python · Bash
+- Kubernetes
+- Minikube
+- Docker
+- Helm
+- Prometheus
+- Grafana
+- Metrics Server
+- YAML
+- Linux
 
-## Key Results
+## Validated Implementation
 
-| Metric | Before | After |
-|--------|--------|-------|
-| Root-cause identification time | ~30 min | ~10 min |
-| Pod count under peak load | 2 | 8 (auto-scaled) |
-| Response time under peak load | Degraded | <300ms maintained |
-| Dashboards | None | 12 Grafana dashboards |
+The following functionality was tested in a local Minikube environment:
 
-## Project Structure
+| Component | Validation |
+|---|---|
+| Minikube cluster | Running single-node cluster |
+| Prometheus | 14 active scrape targets shown as UP |
+| Grafana | Kubernetes workload and resource dashboards viewed |
+| Metrics Server | Resource metrics available |
+| Frontend deployment | Nginx pods deployed in the `prod` namespace |
+| HPA scale-up | Scaled from 2 to 3 and then 5 replicas during CPU load testing |
+| HPA scale-down | Returned from 5 to 2 replicas after load was removed |
 
-```
+**Note:** These are local lab results, not production-cluster benchmarks.
+
+## Repository Structure
+
+```text
 k8s-observability/
-├── prometheus/
-│   ├── values.yaml             # kube-prometheus-stack Helm values
-│   └── alertmanager-rules.yaml # Custom alerting rules
-├── grafana/
-│   └── dashboards/
-│       └── cluster-overview.json  # Exported Grafana dashboard
 ├── efk/
-│   ├── elasticsearch.yaml      # Elasticsearch StatefulSet
-│   ├── fluentd-configmap.yaml  # Fluentd log routing config
-│   └── kibana.yaml             # Kibana Deployment + Service
+│   ├── elasticsearch.yaml
+│   ├── fluentd-configmap.yaml
+│   ├── fluentd-daemonset.yaml
+│   ├── fluentd-rbac.yaml
+│   ├── kibana.yaml
+│   └── logging-namespace.yaml
+│
 ├── hpa/
-│   └── hpa.yaml                # HorizontalPodAutoscaler for 3 workloads
-└── scripts/
-    ├── deploy-alerts.sh        # Bash: deploy Alertmanager rules
-    └── metrics-report.py       # Python: weekly Prometheus report
+│   └── hpa.yaml
+│
+├── prometheus/
+│   ├── values.yaml
+│   └── alertmanager-rules.yaml
+│
+├── scripts/
+│
+└── README.md
 ```
 
-## How to Deploy
+## Local Environment
 
-### 1. Install Prometheus + Grafana
+Tested with:
+
+- Ubuntu 26.04
+- Minikube 1.39.0
+- Kubernetes 1.37.0
+- Helm 4.3.1
+- Docker 29.1.3
+
+## Running the Monitoring Stack
+
+### 1. Start Minikube
+
+```bash
+minikube start --driver=docker
+```
+
+### 2. Enable Metrics Server
+
+```bash
+minikube addons enable metrics-server
+```
+
+### 3. Create the monitoring namespace
+
+```bash
+minikube kubectl -- create namespace monitoring
+```
+
+### 4. Configure Grafana credentials
+
+Create a Kubernetes Secret named `grafana-admin` in the `monitoring` namespace before installing the Helm chart.
+
+Do not commit passwords or other credentials to GitHub.
+
+### 5. Add the Prometheus Community Helm repository
+
 ```bash
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
+```
 
-helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
-  -f prometheus/values.yaml \
+### 6. Install the monitoring stack
+
+```bash
+helm install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
-  --create-namespace
+  -f prometheus/values.yaml \
+  --wait --timeout 10m
 ```
 
-### 2. Deploy Alertmanager rules
+### 7. Verify monitoring pods
+
 ```bash
-chmod +x scripts/deploy-alerts.sh
-./scripts/deploy-alerts.sh
+minikube kubectl -- get pods -n monitoring
 ```
 
-### 3. Deploy EFK Stack
+## HPA Testing
+
+The frontend deployment was tested in the `prod` namespace using Nginx.
+
+### 1. Configure autoscaling
+
 ```bash
-kubectl apply -f efk/elasticsearch.yaml
-kubectl apply -f efk/fluentd-configmap.yaml
-kubectl apply -f efk/kibana.yaml
+minikube kubectl -- autoscale deployment frontend \
+  --namespace prod \
+  --cpu-percent=50 \
+  --min=2 \
+  --max=5
 ```
 
-### 4. Apply HPA
+### 2. Check HPA status
+
 ```bash
-kubectl apply -f hpa/hpa.yaml
+minikube kubectl -- get hpa -n prod
 ```
 
-### 5. Access dashboards
+### 3. Check frontend pods
+
 ```bash
-# Grafana
-kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n monitoring
-
-# Kibana
-kubectl port-forward svc/kibana 5601:5601 -n logging
+minikube kubectl -- get pods -n prod
 ```
 
-### 6. Generate weekly metrics report
+During CPU load testing, the frontend deployment scaled from 2 to 3 and then 5 replicas. After the load was removed, it returned to 2 replicas.
+
+## Accessing Monitoring Dashboards
+
+Grafana can be accessed locally using port forwarding:
+
 ```bash
-python3 scripts/metrics-report.py --prometheus-url http://localhost:9090 --output report.html
+minikube kubectl -- port-forward -n monitoring svc/monitoring-grafana 3000:80
 ```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+Prometheus can be accessed locally using:
+
+```bash
+minikube kubectl -- port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
+```
+
+Open:
+
+```text
+http://localhost:9090
+```
+
+## Current Scope and Future Improvements
+
+The following repository components are not yet fully validated as part of the local implementation:
+
+- Elasticsearch, Fluentd, and Kibana logging deployment.
+- Custom alert-rule behaviour and alert delivery.
+- Additional application workloads and their HPA configurations.
+- Multi-node Kubernetes deployment.
+- Production-scale performance testing.
+
+## Learning Outcomes
+
+- Deploying a Kubernetes monitoring stack using Helm.
+- Understanding Prometheus scrape targets and metrics collection.
+- Exploring Kubernetes metrics in Grafana.
+- Monitoring CPU and memory utilisation.
+- Configuring and testing Horizontal Pod Autoscaling.
+- Troubleshooting Kubernetes workloads and monitoring components.
+
+---
+
+**Project Status:** Local monitoring and HPA functionality tested on Minikube. Additional components remain under development.
